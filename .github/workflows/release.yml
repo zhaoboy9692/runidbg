@@ -1,0 +1,68 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - os: ubuntu-latest
+            targets: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            targets: aarch64-unknown-linux-gnu
+          - os: windows-latest
+            targets: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+      - name: Build
+        shell: bash
+        run: |
+          IFS=',' read -ra T <<< '${{ matrix.targets }}'
+          for t in "${T[@]}"; do cargo build --release --target "$t"; done
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          IFS=',' read -ra T <<< '${{ matrix.targets }}'
+          for t in "${T[@]}"; do
+            case "$t" in
+              *windows*) cp "target/$t/release/runidbg-cli.exe" "dist/runidbg-cli-windows-x64.exe" ;;
+              aarch64-apple-darwin)      cp "target/$t/release/runidbg-cli" dist/runidbg-cli-darwin-arm64 ;;
+              x86_64-apple-darwin)       cp "target/$t/release/runidbg-cli" dist/runidbg-cli-darwin-x64 ;;
+              x86_64-unknown-linux-gnu)  cp "target/$t/release/runidbg-cli" dist/runidbg-cli-linux-x64 ;;
+              aarch64-unknown-linux-gnu) cp "target/$t/release/runidbg-cli" dist/runidbg-cli-linux-arm64 ;;
+            esac
+          done
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ strategy.job-index }}
+          path: dist/*
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
